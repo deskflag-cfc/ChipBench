@@ -55,7 +55,7 @@ class DUT:
     def cleanup_code(self):         return ""
     def sequential_init(self):      return ""
     def helper_code(self, is_sequential): return ""
-    def post_loop_compare(self, is_sequential): return ""
+    def post_loop_compare(self, is_sequential, has_compare_enable=False): return ""
 
 
 class VerilogDUT(DUT):
@@ -167,11 +167,15 @@ class PythonDUT(DUT):
         from tools.cpp_helpers import gen_string_equals, gen_call_python
         return gen_string_equals() + gen_call_python(is_sequential)
 
-    def post_loop_compare(self, is_sequential):
+    def post_loop_compare(self, is_sequential, has_compare_enable=False):
         func = "call_python_sequential" if is_sequential else "call_python_batch"
         count = "NUM_CYCLES" if is_sequential else "NUM_TESTS"
         label = "Cycle" if is_sequential else "Test"
         ev = self.error_var
+        skip_guard = ""
+        if has_compare_enable:
+            skip_guard = """
+            if (!compare_enabled_trace[i]) continue;"""
         return f'''
     std::cout << "Running {self.label} simulation..." << std::endl;
     auto py_outputs = {func}(all_inputs);
@@ -182,6 +186,7 @@ class PythonDUT(DUT):
         {ev} += {count};
     }} else {{
         for (size_t i = WARMUP_CYCLES; i < ref_outputs.size(); i++) {{
+{skip_guard}
             for (const auto& kv : ref_outputs[i]) {{
                 const std::string& name = kv.first;
                 const std::string& expected = kv.second;

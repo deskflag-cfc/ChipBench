@@ -3,6 +3,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tools.extract_ports import extract_ports_from_verilog, extract_ports_from_json
 from tools.reset import is_reset_signal, is_active_low_reset
+from tools.valid import is_valid_signal, get_valid_signals
 
 
 def test_extract_ports_from_verilog():
@@ -32,6 +33,25 @@ def test_is_reset_signal():
     assert is_reset_signal("nreset_n") == (True, True)
     assert is_reset_signal("nreset_b") == (True, True)
     assert is_reset_signal("nreset_l") == (True, True)
+
+
+def test_is_valid_signal():
+    assert is_valid_signal("valid")
+    assert is_valid_signal("in_valid")
+    assert is_valid_signal("input_valid")
+    assert is_valid_signal("valid_i")
+    assert is_valid_signal("validIn")
+    assert is_valid_signal("i_valid")
+    assert is_valid_signal("s_axis_tvalid")
+    assert is_valid_signal("vld")
+    assert is_valid_signal("data_vld")
+    assert not is_valid_signal("invalid")
+    assert not is_valid_signal("not_ready")
+
+
+def test_get_valid_signals():
+    inputs = [("clk", 1), ("rst_n", 1), ("in_valid", 1), ("data", 8)]
+    assert get_valid_signals(inputs) == [("in_valid", 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +291,50 @@ def test_generate_testbench_only_cxxrtl():
     assert "cxxrtl_design" in code
     assert "python_errors" not in code
     assert "CXXRTL:" in code and "PASS" in code
+
+
+def test_generate_testbench_input_valid_guards_inline_compare(tmp_path):
+    ports = tmp_path / "ports.json"
+    ports.write_text(
+        '{"inputs":[{"name":"in_valid","width":1},{"name":"data","width":8}],'
+        '"outputs":[{"name":"Q","width":8}]}'
+    )
+    code = generate_testbench(
+        json_file=str(ports),
+        dut_verilog_file="dut.sv",
+    )
+    assert "bool compare_enabled = (in_valid != 0);" in code
+    assert "if (compare_enabled) {" in code
+    assert "Compare DUT vs REF" in code
+
+
+def test_generate_testbench_input_valid_guards_python_batch(tmp_path):
+    ports = tmp_path / "ports.json"
+    ports.write_text(
+        '{"inputs":[{"name":"s_axis_tvalid","width":1},{"name":"data","width":8}],'
+        '"outputs":[{"name":"Q","width":8}]}'
+    )
+    code = generate_testbench(
+        json_file=str(ports),
+        dut_python_file="dut.py",
+    )
+    assert "std::vector<bool> compare_enabled_trace;" in code
+    assert "bool compare_enabled = (s_axis_tvalid != 0);" in code
+    assert "compare_enabled_trace.push_back(compare_enabled);" in code
+    assert "if (!compare_enabled_trace[i]) continue;" in code
+
+
+def test_generate_testbench_multiple_valids_all_required(tmp_path):
+    ports = tmp_path / "ports.json"
+    ports.write_text(
+        '{"inputs":[{"name":"input_valid","width":1},{"name":"packet_vld","width":1},{"name":"data","width":8}],'
+        '"outputs":[{"name":"Q","width":8}]}'
+    )
+    code = generate_testbench(
+        json_file=str(ports),
+        dut_verilog_file="dut.sv",
+    )
+    assert "bool compare_enabled = (input_valid != 0 && packet_vld != 0);" in code
 
 
 from src.run_verification import run_verification

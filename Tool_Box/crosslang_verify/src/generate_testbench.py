@@ -2,6 +2,7 @@ import os
 import tools.extract_ports as extract_ports
 from tools.reset import is_reset_signal
 from tools.clk import is_clk_signal
+from tools.valid import get_valid_signals
 from tools.dut import VerilogDUT, CxxrtlDUT, PythonDUT
 from tools.signal_gen import generate_signal_code
 from tools.cpp_helpers import gen_all_helpers
@@ -40,7 +41,7 @@ def _gen_includes(is_sequential, duts):
     return code
 
 
-def _gen_main_opening(sig, duts, is_sequential, has_batch):
+def _gen_main_opening(sig, duts, is_sequential, has_batch, has_compare_enable):
     decls = '\n'.join(sig['declarations'])
     clk_decl = "\n    int clk = 0;" if is_sequential else ""
     error_decls = '\n'.join(f"    int {d.error_var} = 0;" for d in duts)
@@ -50,6 +51,9 @@ def _gen_main_opening(sig, duts, is_sequential, has_batch):
         batch_decls = """
     std::vector<std::map<std::string, std::string>> all_inputs;
     std::vector<std::map<std::string, std::string>> ref_outputs;"""
+        if has_compare_enable:
+            batch_decls += """
+    std::vector<bool> compare_enabled_trace;"""
 
     return f'''
 int main(int argc, char** argv) {{
@@ -78,11 +82,15 @@ def _eval_block(sig, inline_duts):
     return '\n'.join(lines)
 
 
-def _compare_block(sig, inline_duts):
+def _compare_block(sig, inline_duts, has_compare_enable):
     parts = []
+    if has_compare_enable and inline_duts:
+        parts.append("\n        if (compare_enabled) {")
     for dut in inline_duts:
         parts.append(f"\n        // Compare {dut.label} vs REF")
         parts.extend(sig['dut_checks'][dut])
+    if has_compare_enable and inline_duts:
+        parts.append("\n        }")
     return ''.join(parts)
 
 
@@ -112,10 +120,32 @@ def _fixed_reset_str(sig):
     return '\n'.join(sig['fixed_reset']) if sig['fixed_reset'] else '        // No reset signals'
 
 
-def _gen_warmup(sig, inline_duts, is_sequential, has_reset, has_batch):
+def _valid_value_expr(name, width):
+    if width <= 64:
+        return f"{name} != 0"
+    n = (width + 31) // 32
+    return "(" + " || ".join(f"{name}[{i}] != 0" for i in range(n)) + ")"
+
+
+def _compare_enable_code(valid_signals, indent="        "):
+    if not valid_signals:
+        return ""
+    expr = " && ".join(_valid_value_expr(name, width) for name, width in valid_signals)
+    return f"{indent}bool compare_enabled = ({expr});"
+
+
+def _collect_compare_enable(has_batch, has_compare_enable):
+    if not has_batch or not has_compare_enable:
+        return ""
+    return "        compare_enabled_trace.push_back(compare_enabled);"
+
+
+def _gen_warmup(sig, inline_duts, is_sequential, has_reset, has_batch, valid_signals):
     warmup_reset = '\n'.join(sig['warmup_reset']) if sig['warmup_reset'] else '            // No reset signals'
     rand_str = '\n'.join(sig['random_generators'])
     collect_in, collect_out = _collect_block(sig, has_batch)
+    compare_enable = _compare_enable_code(valid_signals)
+    collect_enable = _collect_compare_enable(has_batch, bool(valid_signals))
 
     seq_init = ''.join(d.sequential_init() + "\n\n" for d in inline_duts if d.sequential_init())
 
@@ -137,46 +167,56 @@ def _gen_warmup(sig, inline_duts, is_sequential, has_reset, has_batch):
     for (int warmup = 0; warmup < WARMUP_CYCLES; warmup++) {{
 {rand_str}
 {warmup_reset}
+{compare_enable}
 {collect_in}
+{collect_enable}
 {eval_section}
     }}
 '''
 
 
-def _gen_combinational_loop(sig, inline_duts, has_batch):
+def _gen_combinational_loop(sig, inline_duts, has_batch, valid_signals):
     rand_str = '\n'.join(sig['random_generators'])
     ref_set = '\n'.join(sig['ref_setters'])
     collect_in, collect_out = _collect_block(sig, has_batch)
+    compare_enable = _compare_enable_code(valid_signals)
+    collect_enable = _collect_compare_enable(has_batch, bool(valid_signals))
 
     return f'''
     for (int i = 0; i < NUM_TESTS; i++) {{
 {rand_str}
 {_fixed_reset_str(sig)}
+{compare_enable}
 {collect_in}
+{collect_enable}
 {ref_set}
         ref->eval();
 {collect_out}
 {_dut_eval_block(sig, inline_duts)}
-{_compare_block(sig, inline_duts)}
+{_compare_block(sig, inline_duts, bool(valid_signals))}
     }}
 '''
 
 
-def _gen_sequential_loop(sig, inline_duts, has_batch):
+def _gen_sequential_loop(sig, inline_duts, has_batch, valid_signals):
     rand_str = '\n'.join(sig['random_generators'])
     collect_in, collect_out = _collect_block(sig, has_batch)
+    compare_enable = _compare_enable_code(valid_signals)
+    collect_enable = _collect_compare_enable(has_batch, bool(valid_signals))
 
     return f'''
     for (int cycle = 0; cycle < NUM_CYCLES; cycle++) {{
 {rand_str}
 {_fixed_reset_str(sig)}
+{compare_enable}
 {collect_in}
+{collect_enable}
         clk = 1;
 {_eval_block(sig, inline_duts)}
 {collect_out}
         int i = cycle;
         (void)i;
-{_compare_block(sig, inline_duts)}
+{_compare_block(sig, inline_duts, bool(valid_signals))}
         clk = 0;
 {_eval_block(sig, inline_duts)}
     }}
@@ -230,6 +270,7 @@ def generate_testbench(json_file=None, ref_verilog_file=None, dut_verilog_file=N
     # Detect clk / reset
     is_sequential = is_clk_signal(inputs)
     reset_signals = [(n, w, is_reset_signal(n)[1]) for n, w in inputs if is_reset_signal(n)[0]]
+    valid_signals = get_valid_signals(inputs)
     has_reset = len(reset_signals) > 0
     has_wide = any(w > 64 for _, w in inputs + outputs)
 
@@ -249,21 +290,21 @@ def generate_testbench(json_file=None, ref_verilog_file=None, dut_verilog_file=N
     # Assemble C++ file
     code = _gen_includes(is_sequential, duts)
     code += gen_all_helpers(has_wide, duts, is_sequential)
-    code += _gen_main_opening(sig, duts, is_sequential, has_batch)
+    code += _gen_main_opening(sig, duts, is_sequential, has_batch, bool(valid_signals))
 
     if is_sequential:
         code += "    const int NUM_CYCLES = 500;\n"
         code += _banner("SEQUENTIAL", "NUM_CYCLES")
-        code += _gen_warmup(sig, inline_duts, True, has_reset, has_batch)
-        code += _gen_sequential_loop(sig, inline_duts, has_batch)
+        code += _gen_warmup(sig, inline_duts, True, has_reset, has_batch, valid_signals)
+        code += _gen_sequential_loop(sig, inline_duts, has_batch, valid_signals)
     else:
         code += "    const int NUM_TESTS = 1000;\n"
         code += _banner("COMBINATIONAL", "NUM_TESTS")
-        code += _gen_warmup(sig, inline_duts, False, has_reset, has_batch)
-        code += _gen_combinational_loop(sig, inline_duts, has_batch)
+        code += _gen_warmup(sig, inline_duts, False, has_reset, has_batch, valid_signals)
+        code += _gen_combinational_loop(sig, inline_duts, has_batch, valid_signals)
 
     for dut in batch_duts:
-        code += dut.post_loop_compare(is_sequential)
+        code += dut.post_loop_compare(is_sequential, has_compare_enable=bool(valid_signals))
 
     code += _gen_results(duts, is_sequential)
     return code

@@ -68,6 +68,15 @@ Python:  PASS
 
 Return code: `1` if any DUT has errors, `0` if all pass.
 
+## Input valid gating
+
+If an input valid signal is present, generated comparisons are skipped when
+that valid signal is low. Simulation still advances for the reference and all
+DUTs; only the output check is gated. Common names such as `valid`,
+`in_valid`, `input_valid`, `valid_i`, `valid_in`, `i_valid`,
+`s_axis_tvalid`, and `*_vld` are recognized. If multiple input valid signals
+are present, all must be asserted for comparison to run.
+
 ## Dependencies
 
 ```
