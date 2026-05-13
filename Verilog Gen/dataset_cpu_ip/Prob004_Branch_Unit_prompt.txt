@@ -23,13 +23,14 @@ unit functions:
  - PC_Four: The sequential PC computed as Cur_PC + 32'd4 (with Cur_PC
    zero-extended to 32 bits prior to the addition).
 
- - BrPC: The selected branch/jump target address. If JalrSel=1, choose
-   AluResult (e.g., JALR target). If JalrSel=0, choose PC_Imm (e.g.,
-   branch or JAL target). Otherwise, we just set zero.
+ - BrPC: The selected branch/jump target address. First compute
+   Branch_Sel = Branch && AluResult[0]. If JalrSel=1, choose AluResult
+   (e.g., JALR target). Otherwise, if Branch_Sel=1, choose PC_Imm
+   (e.g., branch or JAL target). If neither JalrSel nor Branch_Sel is
+   asserted, set BrPC to 32'd0.
 
  - PcSel: Set to 1 when a control-flow change is taken; otherwise 0.
-   For this problem, use the given Branch input directly as the take/not-take
-   decision: PcSel = Branch. (We do not model branch condition evaluation
-   here.)
-
+   For this problem, a branch is taken only when Branch=1 and AluResult[0]=1.
+   JALR is taken whenever JalrSel=1. Therefore, PcSel = JalrSel ||
+   (Branch && AluResult[0]).
 
