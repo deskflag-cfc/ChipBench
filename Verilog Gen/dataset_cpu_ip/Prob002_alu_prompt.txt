@@ -23,40 +23,42 @@ and 32'd0 when false.
  - 4'b0010: ADD
    ALUResult = SrcA + SrcB (32-bit addition)
 
- - 4'b0011: LEFT SHIFT (logical)
+ - 4'b0011: XOR
+   ALUResult = SrcA ^ SrcB
+
+ - 4'b0100: LEFT SHIFT (logical)
    ALUResult = SrcA << SrcB[4:0]
 
- - 4'b0100: RIGHT SHIFT (logical)
+ - 4'b0101: RIGHT SHIFT (logical)
    ALUResult = SrcA >> SrcB[4:0] (zero-fill)
 
- - 4'b0101: SUBTRACT
+ - 4'b0110: SUBTRACT
    ALUResult = SrcA - SrcB (32-bit subtraction)
 
- - 4'b0110: RIGHT SHIFT ARITHMETIC
+ - 4'b0111: RIGHT SHIFT ARITHMETIC
    ALUResult = $signed(SrcA) >>> SrcB[4:0]
 
- - 4'b0111: EQUAL
+ - 4'b1000: EQUAL
    ALUResult = (SrcA == SrcB) ? 32'd1 : 32'd0
 
- - 4'b1000: NOT EQUAL
+ - 4'b1001: NOT EQUAL
    ALUResult = (SrcA != SrcB) ? 32'd1 : 32'd0
 
- - 4'b1001: LESS THAN (signed)
+ - 4'b1010: ALWAYS TRUE
+   ALUResult = 32'd1
+
+ - 4'b1100: LESS THAN (signed)
    ALUResult = ($signed(SrcA) < $signed(SrcB)) ? 32'd1 : 32'd0
 
- - 4'b1010: GREATER OR EQUAL (signed)
+ - 4'b1101: GREATER OR EQUAL (signed)
    ALUResult = ($signed(SrcA) >= $signed(SrcB)) ? 32'd1 : 32'd0
 
- - 4'b1011: UNSIGNED LESS THAN
+ - 4'b1110: UNSIGNED LESS THAN
    ALUResult = (SrcA < SrcB) ? 32'd1 : 32'd0
 
- - 4'b1100: UNSIGNED GREATER OR EQUAL
+ - 4'b1111: UNSIGNED GREATER OR EQUAL
    ALUResult = (SrcA >= SrcB) ? 32'd1 : 32'd0
-
- - 4'b1101: ALWAYS TRUE
-   ALUResult = 32'd1
 
 Inputs and outputs are purely combinational; no sequential logic is
 required.
-
 
