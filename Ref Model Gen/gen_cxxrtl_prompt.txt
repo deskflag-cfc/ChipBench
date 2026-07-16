@@ -13,13 +13,15 @@ CXXRTL DUT Implementation Requirements
 
 You MUST generate a file equivalent to `dut.cc` with the following rules:
 
-1. You MUST use the `cxxrtl` namespace and define a class named
+1. You MUST use the `cxxrtl` namespace types and define a struct named
    `p_TopModule` inside the `cxxrtl_design` namespace.
 
-2. The class MUST inherit from `cxxrtl::module`:
+2. The struct MUST be STANDALONE. Do NOT inherit from `cxxrtl::module`
+   (its pure virtual interface is different) and do NOT use the
+   `override` keyword:
 
        namespace cxxrtl_design {
-       struct p_TopModule : public cxxrtl::module {
+       struct p_TopModule {
            ...
        };
        }
@@ -34,20 +36,30 @@ You MUST generate a file equivalent to `dut.cc` with the following rules:
    - For sequential circuits with clk:
        - `cxxrtl::wire<1> p_clk;`
 
-5. Required methods:
-   - `void eval() override`  — compute outputs from inputs (and update state)
-   - `bool commit() override` — commit wire state; return true if changed
+5. Required methods (plain, non-virtual, NO `override`):
+   - `void eval()`  — compute outputs from inputs (and update state)
+   - `bool commit()` — may simply `return false;`
 
 6. Combinational vs Sequential logic:
    - If the circuit is combinational:
        - Do NOT store any state
        - `eval()` computes outputs purely from current inputs
-       - `commit()` can return false
+       - `commit()` returns false
    - If the circuit is sequential:
-       - Maintain state using member variables
+       - Maintain state using member variables (plain `cxxrtl::value<N>`)
        - `p_clk` is a `cxxrtl::wire<1>`
-       - Each `eval()` after toggling `p_clk` represents a clock edge
-       - `commit()` must commit wires and return whether state changed
+       - The test harness drives BOTH `p_clk.curr` and `p_clk.next` to the
+         current clock level, then calls `eval()` followed by `commit()`
+         EXACTLY ONCE per clock level (once with clk=1, once with clk=0
+         per cycle)
+       - Therefore, treat `p_clk.curr.data[0] & 1` being true inside
+         `eval()` as the rising clock edge: update all registers there
+       - When several registers update on the same edge, compute every
+         next-state value from the CURRENT state before assigning any of
+         them (registers update simultaneously in hardware)
+       - After updating (or not updating) state, always drive the output
+         ports from the state
+       - Do NOT call `p_clk.commit()` — `commit()` may simply return false
 
 7. Bit-width behavior:
    - Use `cxxrtl::value<N>` for N-bit values
@@ -78,16 +90,16 @@ Example (Combinational — 1-bit AND gate)
 
 namespace cxxrtl_design {
 
-struct p_TopModule : public cxxrtl::module {
+struct p_TopModule {
     cxxrtl::value<1> p_a;
     cxxrtl::value<1> p_b;
     cxxrtl::value<1> p_y;
 
-    void eval() override {
+    void eval() {
         p_y.data[0] = p_a.data[0] & p_b.data[0] & 0x1;
     }
 
-    bool commit() override {
+    bool commit() {
         return false;
     }
 };
@@ -104,7 +116,7 @@ Example (Sequential — 8-bit D flip-flop with reset)
 
 namespace cxxrtl_design {
 
-struct p_TopModule : public cxxrtl::module {
+struct p_TopModule {
     cxxrtl::wire<1> p_clk;
     cxxrtl::value<1> p_reset;
     cxxrtl::value<8> p_d;
@@ -112,8 +124,9 @@ struct p_TopModule : public cxxrtl::module {
 
     cxxrtl::value<8> state_q;
 
-    void eval() override {
-        // Detect rising edge of clk
+    void eval() {
+        // The harness calls eval() exactly once per clock level, so a high
+        // clock level here corresponds to the rising edge of clk.
         bool posedge_clk = p_clk.curr.data[0] & 1;
 
         if (posedge_clk) {
@@ -127,9 +140,8 @@ struct p_TopModule : public cxxrtl::module {
         p_q.data[0] = state_q.data[0] & 0xFF;
     }
 
-    bool commit() override {
-        bool changed = p_clk.commit();
-        return changed;
+    bool commit() {
+        return false;
     }
 };
 

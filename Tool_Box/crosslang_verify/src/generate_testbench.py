@@ -147,7 +147,11 @@ def _gen_warmup(sig, inline_duts, is_sequential, has_reset, has_batch, valid_sig
     compare_enable = _compare_enable_code(valid_signals)
     collect_enable = _collect_compare_enable(has_batch, bool(valid_signals))
 
-    seq_init = ''.join(d.sequential_init() + "\n\n" for d in inline_duts if d.sequential_init())
+    # sequential_init drives the clock port; only emit it for sequential circuits
+    # (combinational DUTs have no clk member).
+    seq_init = ""
+    if is_sequential:
+        seq_init = ''.join(d.sequential_init() + "\n\n" for d in inline_duts if d.sequential_init())
 
     if is_sequential:
         eval_section = f"""

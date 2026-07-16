@@ -8,12 +8,56 @@ Supports any combination of DUTs:
 """
 
 import os
+import re
 import subprocess
 import shutil
 from pathlib import Path
 
 from src.generate_testbench import generate_testbench
 
+
+def normalize_cxxrtl_source(text):
+    """Normalize a CXXRTL DUT source file so it compiles against the real
+    Yosys CXXRTL runtime.
+
+    Real yosys-generated CXXRTL implements the abstract cxxrtl::module
+    interface (``bool eval(performer*)``, ``void reset()``, ``debug_info``)
+    and is left untouched.
+
+    Hand-written "simplified" models (the contract in
+    ``Ref Model Gen/gen_cxxrtl_prompt.txt``) define ``void eval()`` /
+    ``bool commit()``. Those signatures do NOT match the abstract base's
+    pure virtuals, so inheriting from cxxrtl::module makes the struct
+    abstract and every ``override`` a compile error. Rewrite such models
+    into a standalone struct:
+      - strip markdown code fences (``` lines) if present
+      - drop ``: public cxxrtl::module`` inheritance from p_TopModule
+      - drop ``override`` keywords
+      - rewrite bare ``p_<wire>.commit()`` calls (wire::commit requires a
+        mandatory observer argument) into an equivalent manual commit
+    """
+    lines = [l for l in text.splitlines() if not l.lstrip().startswith("```")]
+    text = "\n".join(lines).strip() + "\n"
+
+    # Yosys-generated code: leave untouched.
+    if re.search(r'\bperformer\b|\bdebug_info\b', text):
+        return text
+
+    # Only simplified models declare a no-argument eval().
+    if not re.search(r'\bvoid\s+eval\s*\(\s*\)', text):
+        return text
+
+    text = re.sub(
+        r'((?:struct|class)\s+p_TopModule\b[^:{;()]*?)\s*:\s*'
+        r'(?:public\s+|private\s+|protected\s+)?(?:cxxrtl\s*::\s*)?module\b',
+        r'\1', text)
+    text = re.sub(r'\s+override\b', '', text)
+    text = re.sub(
+        r'\b(p_\w+)\s*\.\s*commit\s*\(\s*\)',
+        r'([&]() { bool _chg = (\1.curr != \1.next); \1.curr = \1.next; '
+        r'return _chg; }())',
+        text)
+    return text
 
 def _detect_cxxrtl_include():
     for candidate in (
@@ -75,9 +119,15 @@ def run_verification(ref_sv, dut_sv=None, dut_cc=None, dut_py=None,
     work_path = Path(work_dir)
     work_path.mkdir(parents=True, exist_ok=True)
 
-    # Copy files to work dir
-    for src in filter(None, [ref_sv, dut_sv, dut_cc, dut_py]):
+    # Copy files to work dir (normalizing the CXXRTL DUT so simplified
+    # hand-written models compile against the real CXXRTL runtime)
+    for src in filter(None, [ref_sv, dut_sv, dut_py]):
         shutil.copy(src, work_path / os.path.basename(src))
+    if dut_cc:
+        with open(dut_cc) as f:
+            cc_text = f.read()
+        with open(work_path / os.path.basename(dut_cc), 'w') as f:
+            f.write(normalize_cxxrtl_source(cc_text))
 
     # --- Generate testbench.cpp ---
     print("Generating testbench.cpp...")

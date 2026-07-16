@@ -108,7 +108,9 @@ class CxxrtlDUT(DUT):
         return "    cxxrtl_design::p_TopModule cxxrtl_dut;"
 
     def clk_setter(self, name):
-        return f"        cxxrtl_dut.{self.mangle(name)}.set(clk);"
+        # cxxrtl_drive_clk works for both value<1> (yosys-generated) and
+        # wire<1> (hand-written simplified) clock ports.
+        return f"        cxxrtl_drive_clk(cxxrtl_dut.{self.mangle(name)}, (uint32_t)clk);"
 
     def input_setter(self, name, width):
         m = self.mangle(name)
@@ -142,13 +144,16 @@ class CxxrtlDUT(DUT):
                                f"ref->{name}", f"cxxrtl_dut.{m}.data")
 
     def sequential_init(self):
-        return """    cxxrtl_dut.p_clk.set(0);
+        return """    cxxrtl_drive_clk(cxxrtl_dut.p_clk, 0u);
     cxxrtl_dut.eval();
     cxxrtl_dut.commit();"""
 
     def helper_code(self, is_sequential):
-        from tools.cpp_helpers import gen_value_to_string
-        return gen_value_to_string()
+        from tools.cpp_helpers import gen_value_to_string, gen_cxxrtl_clk_helper
+        code = gen_value_to_string()
+        if is_sequential:
+            code += gen_cxxrtl_clk_helper()
+        return code
 
 
 class PythonDUT(DUT):

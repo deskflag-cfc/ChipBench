@@ -430,7 +430,58 @@ def test_generate_testbench_multiple_valids_all_required(tmp_path):
     assert "bool compare_enabled = (input_valid != 0 && packet_vld != 0);" in code
 
 
-from src.run_verification import run_verification
+from src.run_verification import run_verification, normalize_cxxrtl_source
+
+
+def test_normalize_cxxrtl_strips_fences_inheritance_and_override():
+    src = (
+        "```cpp\n"
+        "#include <cxxrtl/cxxrtl.h>\n"
+        "namespace cxxrtl_design {\n"
+        "struct p_TopModule : public cxxrtl::module {\n"
+        "    cxxrtl::value<1> p_a;\n"
+        "    void eval() override { }\n"
+        "    bool commit() override { return false; }\n"
+        "};\n"
+        "}\n"
+        "```\n"
+    )
+    out = normalize_cxxrtl_source(src)
+    assert "```" not in out
+    assert "cxxrtl::module" not in out
+    assert "override" not in out
+    assert "struct p_TopModule {" in out
+
+
+def test_normalize_cxxrtl_rewrites_bare_wire_commit():
+    src = (
+        "struct p_TopModule : public cxxrtl::module {\n"
+        "    cxxrtl::wire<1> p_clk;\n"
+        "    void eval() override { }\n"
+        "    bool commit() override { return p_clk.commit(); }\n"
+        "};\n"
+    )
+    out = normalize_cxxrtl_source(src)
+    assert "p_clk.commit()" not in out
+    assert "p_clk.curr = p_clk.next" in out
+
+
+def test_normalize_cxxrtl_leaves_yosys_generated_code_alone():
+    with open("/workspace/verilogeval/Tool_Box/cxxrtl/dut.cc") as f:
+        src = f.read()
+    assert normalize_cxxrtl_source(src) == src
+
+
+def test_end_to_end_simplified_cxxrtl_model():
+    """End-to-end: hand-written simplified CXXRTL model (standalone struct,
+    void eval()/bool commit(), wire<1> p_clk) against the sequential LFSR."""
+    ret = run_verification(
+        ref_sv="/workspace/verilogeval/Tool_Box/verilog/ref.sv",
+        dut_cc="/workspace/verilogeval/Tool_Box/cxxrtl/dut_simplified.cc",
+        work_dir="/tmp/test_e2e_simplified_cc",
+    )
+    assert ret == 0
+
 
 def test_end_to_end_multi_module():
     """End-to-end: multi-module ref.sv + dut.sv, multi-class dut.py, all 3 DUTs."""

@@ -92,6 +92,26 @@ std::string wire_to_string(const cxxrtl::wire<Bits>& w) {
 '''
 
 
+def gen_cxxrtl_clk_helper():
+    return '''
+// Drive the CXXRTL clock port. Overloads cover both port styles:
+// - cxxrtl::value<N> (yosys-generated designs): plain set; the design tracks
+//   the previous clock level itself (prev_p_clk) for edge detection.
+// - cxxrtl::wire<N>  (hand-written simplified models, see gen_cxxrtl_prompt):
+//   set BOTH curr and next, so a level check on p_clk.curr inside eval()
+//   observes the clock value driven for this half-cycle.
+template<size_t Bits>
+void cxxrtl_drive_clk(cxxrtl::value<Bits>& clk_port, uint32_t level) {
+    clk_port.set(level);
+}
+template<size_t Bits>
+void cxxrtl_drive_clk(cxxrtl::wire<Bits>& clk_port, uint32_t level) {
+    clk_port.next.set(level);
+    clk_port.curr.set(level);
+}
+'''
+
+
 def gen_call_python(is_sequential):
     func_name = "call_python_sequential" if is_sequential else "call_python_batch"
     return f'''
