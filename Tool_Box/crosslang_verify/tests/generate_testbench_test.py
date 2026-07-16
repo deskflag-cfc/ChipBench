@@ -7,20 +7,113 @@ from tools.valid import is_valid_signal, get_valid_signals
 
 
 def test_extract_ports_from_verilog():
-    """Multi-module file: extracts ports from ALL modules."""
+    """Multi-module file: extracts ports from the named top-level module only."""
     inputs, outputs = extract_ports_from_verilog("/workspace/verilogeval/Tool_Box/verilog/ref.sv")
-    # lfsr_core has (Q_in, Q_out), RefModule has (clk, rst_n, Q)
-    assert ("clk", 1) in inputs
-    assert ("rst_n", 1) in inputs
-    assert ("Q_in", 4) in inputs
-    assert ("Q", 4) in outputs
-    assert ("Q_out", 4) in outputs
+    # RefModule has (clk, rst_n, Q); lfsr_core's (Q_in, Q_out) is an internal
+    # submodule and must NOT leak into the top-level port list.
+    assert inputs == [("clk", 1), ("rst_n", 1)]
+    assert outputs == [("Q", 4)]
+
+def test_extract_ports_from_verilog_explicit_module_name():
+    inputs, outputs = extract_ports_from_verilog(
+        "/workspace/verilogeval/Tool_Box/verilog/dut.sv", module_name="TopModule"
+    )
+    assert inputs == [("clk", 1), ("rst_n", 1)]
+    assert outputs == [("Q", 4)]
 
 def test_extract_ports_from_json():
     """JSON only has the top-level ports (no submodule ports)."""
     inputs, outputs = extract_ports_from_json("/workspace/verilogeval/Tool_Box/verilog/ports.json")
     assert inputs == [("clk", 1), ("rst_n", 1)]
     assert outputs == [("Q", 4)]
+
+def _write_sv(tmpdir, name, body):
+    path = os.path.join(tmpdir, name)
+    with open(path, "w") as f:
+        f.write(body)
+    return path
+
+
+def test_extract_ports_parameterized_width():
+    """A width like [DATA_WIDTH-1:0] must resolve via the parameter list.
+
+    The type keyword must never become the port name: two such ports both
+    named 'logic' emit `uint32_t logic` twice and fail to compile.
+    """
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_sv(d, "alu_ref.sv", """
+module RefModule#(
+        parameter DATA_WIDTH = 32,
+        parameter OPCODE_LENGTH = 4
+        )
+        (
+        input logic [DATA_WIDTH-1:0]    SrcA,
+        input logic [OPCODE_LENGTH-1:0]    Operation,
+        output logic[DATA_WIDTH-1:0] ALUResult
+        );
+endmodule
+""")
+        inputs, outputs = extract_ports_from_verilog(p)
+        assert inputs == [("SrcA", 32), ("Operation", 4)], inputs
+        assert outputs == [("ALUResult", 32)], outputs
+
+
+def test_extract_ports_macro_width():
+    """`define-based widths (cpu_ip style) must resolve, e.g. [`RegBus]."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_sv(d, "cpu_ref.sv", """
+`define RegBus 31:0
+module RefModule(
+    input wire clk,
+    input wire [`RegBus] rdata,
+    output reg [`RegBus] wdata
+);
+endmodule
+""")
+        inputs, outputs = extract_ports_from_verilog(p)
+        assert inputs == [("clk", 1), ("rdata", 32)], inputs
+        assert outputs == [("wdata", 32)], outputs
+
+
+def test_extract_ports_never_returns_type_keyword():
+    """Regression: unresolvable widths must not yield a port named 'logic'."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_sv(d, "sig_ref.sv", """
+module RefModule(
+    input signed [7:0] y,
+    output logic [3:0] z
+);
+endmodule
+""")
+        inputs, outputs = extract_ports_from_verilog(p)
+        names = [n for n, _ in inputs + outputs]
+        assert not (set(names) & {"logic", "wire", "reg", "signed"}), names
+        assert inputs == [("y", 8)], inputs
+        assert outputs == [("z", 4)], outputs
+
+
+def test_extract_ports_unresolved_width_raises():
+    """An out-of-scope macro must error, not silently yield a 1-bit port.
+
+    score_refmodel prepends the testbench's `defines before scoring; if that
+    ever stops happening, a [`RegBus] port must fail loudly rather than verify
+    32-bit signals as 1 bit and report bogus mismatches.
+    """
+    import tempfile, pytest
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_sv(d, "nodefine_ref.sv", """
+module RefModule(
+    input wire clk,
+    input wire [`RegBus] data_i
+);
+endmodule
+""")
+        with pytest.raises(ValueError, match="unresolved width"):
+            extract_ports_from_verilog(p)
+
 
 def test_is_reset_signal():
     assert is_reset_signal("reset") == (True, False)
