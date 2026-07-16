@@ -1,1 +1,9 @@
+Prob001_controller
+Prob002_alu
+Prob003_RegFile
+Prob004_Branch_Unit
 Prob005_ALU_Controller
+Prob006_PC_REG
+Prob007_div
+Prob008_chapter12_ctrl
+Prob009_cp0_reg
