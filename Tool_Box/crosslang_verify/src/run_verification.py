@@ -14,7 +14,24 @@ from pathlib import Path
 
 from src.generate_testbench import generate_testbench
 
-CXXRTL_INCLUDE = "/usr/local/share/yosys/include/backends/cxxrtl/runtime"
+
+def _detect_cxxrtl_include():
+    for candidate in (
+        os.environ.get("CXXRTL_INCLUDE"),
+        "/usr/local/share/yosys/include/backends/cxxrtl/runtime",
+    ):
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    try:
+        datdir = subprocess.run(
+            ["yosys-config", "--datdir"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        return os.path.join(datdir, "include", "backends", "cxxrtl", "runtime")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "/usr/local/share/yosys/include/backends/cxxrtl/runtime"
+
+
+CXXRTL_INCLUDE = _detect_cxxrtl_include()
 VERILATOR_WARNS = [
     "-Wno-fatal", "-Wno-WIDTH", "-Wno-UNUSED",
     "-Wno-UNDRIVEN", "-Wno-UNOPTFLAT", "-Wno-DECLFILENAME",
