@@ -14,3 +14,34 @@ Makefile
 *.mk
 summary.*
 *.vcd
+
+# Credentials. Never commit these: the runner reads a live OAuth token from
+# eval-fable5/.oauth_token, and a token in history is unrevokable by rebase.
+.oauth_token
+*.oauth_token
+.credentials.json
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Locally built toolchain binaries (see Dockerfile); ~8MB, not source.
+.toolchain/
+
+# eval-fable5: the harness scripts and manifest.jsonl are tracked, the run
+# artifacts are not. raw/ and generated/ are model inference outputs and must
+# be reproduced by a run rather than restored from git.
+eval-fable5/raw/
+eval-fable5/generated/
+eval-fable5/results/
+eval-fable5/prompts/
+eval-fable5/tasks/
+eval-fable5/baseline_gen/
+eval-fable5/baseline_ref/
+eval-fable5/baseline_*.json
+eval-fable5/gen_ids.json
+eval-fable5/resume_state.json
+eval-fable5/*.log
+eval-fable5/.last_cli_probe
+eval-fable5/.run_local.lock
+eval-fable5/.runner_pause
