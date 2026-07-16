@@ -45,3 +45,13 @@ eval-fable5/*.log
 eval-fable5/.last_cli_probe
 eval-fable5/.run_local.lock
 eval-fable5/.runner_pause
+
+# Internal handoff doc: machine topology, private IPs, SSH usernames/hostnames,
+# a key path, and a note that a pasted SSH password should be rotated. Must not
+# reach the public fork. Kept local by deliberate choice, not oversight.
+handoff_fable5.md
+
+# Root-level benchmark outputs (all-models pass-rate CSVs/HTML, incl. competitor
+# models). Left unpublished by choice. Anchored to the repo root; the
+# eval-fable5/results/ run artifacts are ignored separately above.
+/results/
